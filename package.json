@@ -1,0 +1,20 @@
+{
+  "name": "naver-realestate-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "네이버 부동산 시세를 구글 시트로 자동 수집하고, 순위와 임장보고서(React 대시보드)를 만들어주는 개인용 도구",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "setup": "bash scripts/setup.sh",
+    "update": "node --env-file=.env scripts/update-prices.js",
+    "update:dry": "node --env-file=.env scripts/update-prices.js --dry",
+    "ranking": "node --env-file=.env scripts/update-ranking.js",
+    "ranking:dry": "node --env-file=.env scripts/update-ranking.js --dry",
+    "report": "node --env-file=.env scripts/generate-report.js",
+    "probe": "node --env-file=.env scripts/probe.js"
+  }
+}
