@@ -527,6 +527,9 @@ export async function fetchAllComplexArticlesFin({
   await ensureFinCookies({ baseUrl, fetchImpl });
   const wait = rateLimiter ?? createRateLimiter();
   const articles = [];
+  // 커서 페이지네이션: page 만 보내면 매 요청 무작위 순서 + hasNextPage 항상 true →
+  // 이전 응답의 seed/lastInfo 를 되돌려줘야 다음 페이지가 이어진다.
+  let cursor = {};
   for (let page = 1; page <= maxPages; page += 1) {
     await wait();
     const body = JSON.stringify({
@@ -535,6 +538,7 @@ export async function fetchAllComplexArticlesFin({
       page,
       size: pageSize,
       userChannelType: 'PC',
+      ...cursor,
     });
     let payload;
     for (let attempt = 0; ; attempt += 1) {
@@ -575,16 +579,23 @@ export async function fetchAllComplexArticlesFin({
       break;
     }
     assertLivePayload(payload, 'fin_articles');
+    const { seed, lastInfo } = payload.result ?? {};
+    if (seed && lastInfo) cursor = { seed, lastInfo };
     const { list, more } = extractArticleList(payload.result ?? payload);
     let rawCount = 0;
     for (const item of list) {
       rawCount += 1;
-      // fin API 는 매물 정보가 한 겹 안에 있음 (representativeArticleInfo).
-      // 가격 등 일부 필드는 item 레벨의 형제 키일 수 있어 병합해서 정규화.
+      // fin API 는 동일 매물(중개사 중복 등록)을 그룹으로 묶고 representativeArticleInfo 에
+      // 대표(최신) 매물만 담는다 → 그룹 전체(duplicatedArticleInfo.articleInfoList)를 펼쳐야
+      // 더 싼 중복 매물이 최저가 계산에서 빠지지 않는다. 중복 articleNo 는 dedupe 가 처리.
+      const group = item?.duplicatedArticleInfo?.articleInfoList;
       const wrapped = item?.representativeArticleInfo ?? item?.articleInfo;
-      const unwrapped = wrapped ? { ...item, ...wrapped } : item;
-      const a = normalizeArticle(unwrapped);
-      if (a) {
+      const members = Array.isArray(group) && group.length > 0
+        ? group
+        : [wrapped ? { ...item, ...wrapped } : item];
+      for (const member of members) {
+        const a = normalizeArticle(member);
+        if (!a) continue;
         if (!a.tradeType) a.tradeType = tradeType; // 요청 필터 기준 보정
         articles.push(a);
       }

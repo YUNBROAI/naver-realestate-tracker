@@ -52,6 +52,7 @@ export function resolveConfig({ env = process.env, argv = [] } = {}) {
       ...(!keyPath ? ['SA키 누락'] : []),
     ],
     keyPath,
+    onlyMissing: flags.has('--only-missing') || flags.has('--new-only') || env.RE_ONLY_MISSING === '1',
     // 순위 탭 자동 갱신 여부. 실쓰기 성공 후 --complex 단일 갱신처럼 부분 실행일 때는 스킵.
     skipRanking: flags.has('--skip-ranking') || env.RE_SKIP_RANKING === '1' || !!getArg('--complex'),
   };
@@ -161,12 +162,15 @@ export async function runPriceUpdate({
     const rows = valueRanges[i]?.values ?? [];
     try {
       const { columns, targets } = extractTargets(sheetName, rows);
-      const filtered = cfg.complexFilter
+      let filtered = cfg.complexFilter
         ? targets.filter((t) => t.complexNo === String(cfg.complexFilter))
         : targets;
+      if (cfg.onlyMissing) {
+        filtered = filtered.filter((t) => t.current.salePrice == null);
+      }
       perSheet.push({ sheetName, columns, targets: filtered });
       totalTargets += filtered.length;
-      logger.ok('parse', `${sheetName}: 타깃 ${filtered.length}행`);
+      logger.ok('parse', `${sheetName}: 타깃 ${filtered.length}행` + (cfg.onlyMissing ? ` (신규/미입력만)` : ''));
     } catch (err) {
       logger.error('parse', `${sheetName}: ${err.message}`);
       perSheet.push({ sheetName, columns: null, targets: [], parseError: err.message });
@@ -288,7 +292,7 @@ export async function runPriceUpdate({
 
   // 7) 순위 탭 자동 갱신 (실쓰기 성공 + 전체 실행 시). 실패해도 파이프라인은 성공 유지.
   let ranking = null;
-  if (!cfg.dryRun && !cfg.skipRanking && updatedCells > 0) {
+  if (!cfg.dryRun && !cfg.skipRanking && (updatedCells > 0 || (cfg.onlyMissing && totalTargets > 0))) {
     try {
       ranking = await updateRankingTab({
         client, sheetId: cfg.sheetId, dongTabs: targetSheets, logger,

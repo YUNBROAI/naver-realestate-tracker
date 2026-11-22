@@ -352,3 +352,54 @@ test('normalizeArticle: fin 매매(A1) — warrantyPrice=0 + dealPrice 만 채�
   assert.equal(a.tradeType, 'A1');
   assert.equal(a.priceManwon, 95000); // 9.5억
 });
+
+// fin API 는 동일 매물(여러 중개사 중복 등록)을 1개 그룹으로 묶고 representativeArticleInfo 에는
+// 대표(최신 확인) 매물만 담는다. 같은 그룹의 더 싼 중복 매물을 놓치면 "최저가"가 아니라 "최신가"가 된다.
+test('fetchAllComplexArticlesFin: duplicatedArticleInfo 그룹 내 모든 매물 수집 (최저가 누락 방지)', async () => {
+  const { fetchAllComplexArticlesFin, _clearFinCookiesForTests } = await import('../../src/real_estate/naver_land_client.js');
+  const art = (no, price, date) => ({
+    articleNumber: no, tradeType: 'A1', spaceInfo: { supplySpace: 112.42 },
+    verificationInfo: { articleConfirmDate: date }, articleDetail: { floorInfo: '10/20' },
+    priceInfo: { dealPrice: price, warrantyPrice: 0 },
+  });
+  const fetchImpl = async (url, init = {}) => ({
+    ok: true, status: 200,
+    headers: { getSetCookie: () => [], get: () => null },
+    text: async () => (init.method ? JSON.stringify({ isSuccess: true, result: {
+      hasNextPage: false,
+      list: [{
+        representativeArticleInfo: art('2', 1700000000, '2026-09-28'),
+        duplicatedArticleInfo: { articleInfoList: [art('2', 1700000000, '2026-09-28'), art('1', 1650000000, '2026-09-10')] },
+      }],
+    } }) : ''),
+  });
+  const out = await fetchAllComplexArticlesFin({
+    complexNo: '1', tradeType: 'A1', rateLimiter: async () => {}, fetchImpl, logger: { warn() {} },
+  });
+  assert.deepEqual(out.map((a) => a.priceManwon).sort(), [165000, 170000]);
+  _clearFinCookiesForTests();
+});
+
+// fin API 는 커서 페이지네이션 — page 만 보내면 무작위 30건 + hasNextPage 항상 true.
+test('fetchAllComplexArticlesFin: 이전 응답의 seed/lastInfo 를 다음 요청에 전달', async () => {
+  const { fetchAllComplexArticlesFin, _clearFinCookiesForTests } = await import('../../src/real_estate/naver_land_client.js');
+  const bodies = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (init.method) bodies.push(JSON.parse(init.body));
+    const n = bodies.length;
+    return { ok: true, status: 200, headers: { getSetCookie: () => [], get: () => null },
+      text: async () => (init.method ? JSON.stringify({ isSuccess: true, result: {
+        seed: 'S', lastInfo: [n], hasNextPage: n < 2,
+        list: [{ articleNumber: String(n), tradeType: 'A1', priceInfo: { dealPrice: 100000 } }],
+      } }) : '') };
+  };
+  const out = await fetchAllComplexArticlesFin({
+    complexNo: '1', tradeType: 'A1', rateLimiter: async () => {}, fetchImpl, logger: { warn() {} },
+  });
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[0].seed, undefined);
+  assert.equal(bodies[1].seed, 'S');
+  assert.deepEqual(bodies[1].lastInfo, [1]);
+  assert.equal(out.length, 2);
+  _clearFinCookiesForTests();
+});
